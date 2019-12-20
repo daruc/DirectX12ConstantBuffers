@@ -72,6 +72,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		PostQuitMessage(0);
 		return 0;
 	case WM_PAINT:
+		g_engine.Update();
 		g_engine.Render();
 		return 0;
 	}

@@ -10,12 +10,17 @@ struct VS_OUTPUT
 	float4 color : COLOR;
 };
 
+cbuffer ConstantBuffer : register(b0)
+{
+	float4 colorMultiplier;
+};
+
 // simple vertex shader
 VS_OUTPUT vsMain(VS_INPUT input)
 {
 	VS_OUTPUT output;
 	output.pos = float4(input.pos, 1.0f);
-	output.color = input.color;
+	output.color = input.color * colorMultiplier;
 	return output;
 }
 

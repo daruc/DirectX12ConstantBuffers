@@ -5,6 +5,7 @@
 #include <dxgi1_4.h>	// ?
 #include <d3dcompiler.h>
 #include <DirectXMath.h>
+#include <chrono>
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -13,6 +14,8 @@
 using Microsoft::WRL::ComPtr;
 using DirectX::XMFLOAT3;
 using DirectX::XMFLOAT4;
+using std::chrono::high_resolution_clock;
+using std::chrono::duration;
 
 struct Vertex
 {
@@ -25,12 +28,20 @@ struct Vertex
 	}
 };
 
+struct ConstantBuffer
+{
+	XMFLOAT4 colorMultiplier;
+};
+
 class Engine
 {
 private:
+
 	UINT m_resolutionWidth;
 	UINT m_resolutionHeight;
 	HWND m_hwnd;
+
+	high_resolution_clock::time_point prevTime;
 
 	ComPtr<ID3D12CommandAllocator> m_commandAllocator;
 	ComPtr<ID3D12GraphicsCommandList> m_commandList;
@@ -62,6 +73,12 @@ private:
 	ComPtr<ID3D12DescriptorHeap> m_dsDescriptorHeap;
 	ComPtr<ID3D12Resource> m_dsBuffer;
 
+	// constant buffer
+	ComPtr<ID3D12DescriptorHeap> m_cbDescriptorHeap[2];
+	ComPtr<ID3D12Resource> m_constantBufferUploadHeap[2];
+	ConstantBuffer m_cbColorMultiplierData;
+	UINT8* m_cbColorMultiplierGpuAddress[2];
+
 	int m_frameIndex;	// render target index
 	UINT m_rtvDescriptorSize;	// Render Target View descriptor heap size
 	UINT64 m_fenceValue;
@@ -75,11 +92,13 @@ private:
 	void CreatePipelineStateObject();
 	void CreateVertexBuffer();
 	void FillOutViewportAndScissorRect();
+	void CreateConstantBuffer();
 public:
 	Engine(UINT resolutionWidth, UINT resolutionHeight);
 	~Engine();
 
 	void Init(HWND hwnd);
+	void Update();
 	void Render();
 	void Destroy();
 };

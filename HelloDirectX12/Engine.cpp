@@ -73,8 +73,34 @@ void Engine::WaitForPreviousFrame()
 
 void Engine::CreateRootSignature()
 {
+	D3D12_DESCRIPTOR_RANGE descriptorTableRanges[1];
+	descriptorTableRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+	descriptorTableRanges[0].NumDescriptors = 1;
+	descriptorTableRanges[0].BaseShaderRegister = 0;
+	descriptorTableRanges[0].RegisterSpace = 0;
+	descriptorTableRanges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_DESCRIPTOR_TABLE rootDescriptorTable;
+	rootDescriptorTable.NumDescriptorRanges = 1;
+	rootDescriptorTable.pDescriptorRanges = descriptorTableRanges;
+
+	D3D12_ROOT_PARAMETER rootParameters[1];
+	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParameters[0].DescriptorTable = rootDescriptorTable;
+	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
 	CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
-	rootSignatureDesc.Init(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	rootSignatureDesc.Init(_countof(rootParameters),
+		rootParameters,
+		0,
+		nullptr,
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+		D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+		D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
+		D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS
+	);
+
 	ID3DBlob* signature;
 	HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, nullptr);
 	if (FAILED(hr))
@@ -151,6 +177,7 @@ void Engine::CreatePipelineStateObject()
 	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	psoDesc.NumRenderTargets = 1;
 	psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 
 	HRESULT hr = m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pipelineState));
 	if (FAILED(hr))
@@ -351,6 +378,58 @@ void Engine::FillOutViewportAndScissorRect()
 	m_scissorRect.bottom = m_resolutionHeight;
 }
 
+void Engine::CreateConstantBuffer()
+{
+	HRESULT hr;
+	// descriptor heap
+	for (int i = 0; i < 2; ++i)
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC descriptorHeapDesc = {};
+		descriptorHeapDesc.NumDescriptors = 1;
+		descriptorHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		descriptorHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+		hr = m_device->CreateDescriptorHeap(&descriptorHeapDesc, IID_PPV_ARGS(&m_cbDescriptorHeap[i]));
+		if (FAILED(hr))
+		{
+			exit(-1);
+		}
+	}
+
+	// resource heap
+	for (int i = 0; i < 2; ++i)
+	{
+		hr = m_device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+			D3D12_HEAP_FLAG_NONE,
+			&CD3DX12_RESOURCE_DESC::Buffer(1024 * 64),
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&m_constantBufferUploadHeap[i]));
+
+		if (FAILED(hr))
+		{
+			exit(-1);
+		}
+
+		m_constantBufferUploadHeap[i]->SetName(L"Constant Buffer Upload Heap");
+
+		D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
+		cbvDesc.BufferLocation = m_constantBufferUploadHeap[i]->GetGPUVirtualAddress();
+		cbvDesc.SizeInBytes = (sizeof(ConstantBuffer) + 255) & ~255;
+		m_device->CreateConstantBufferView(&cbvDesc, m_cbDescriptorHeap[i]->GetCPUDescriptorHandleForHeapStart());
+
+		m_cbColorMultiplierData = {};
+
+		CD3DX12_RANGE readRange(0, 0);
+		hr = m_constantBufferUploadHeap[i]->Map(0, &readRange, reinterpret_cast<void**>(&m_cbColorMultiplierGpuAddress[i]));
+		if (FAILED(hr))
+		{
+			exit(-1);
+		}
+		memcpy(m_cbColorMultiplierGpuAddress[i], &m_cbColorMultiplierData, sizeof(m_cbColorMultiplierData));
+	}
+}
+
 void Engine::Init(HWND hwnd)
 {
 	m_hwnd = hwnd;
@@ -484,10 +563,39 @@ void Engine::Init(HWND hwnd)
 	CreateRootSignature();
 	LoadShaders();
 	CreatePipelineStateObject();
+	CreateConstantBuffer();
 	CreateVertexBuffer();
 	FillOutViewportAndScissorRect();
 
 	WaitForPreviousFrame();
+
+	prevTime = high_resolution_clock::now();
+}
+
+void Engine::Update()
+{
+	high_resolution_clock::time_point now = high_resolution_clock::now();
+	double deltaSec = duration<double>(now - prevTime).count();
+	prevTime = now;
+
+	m_cbColorMultiplierData.colorMultiplier.x += 0.05 * deltaSec;
+	m_cbColorMultiplierData.colorMultiplier.y += 0.09 * deltaSec;
+	m_cbColorMultiplierData.colorMultiplier.z += 0.03 * deltaSec;
+
+	if (m_cbColorMultiplierData.colorMultiplier.x > 1.0)
+	{
+		m_cbColorMultiplierData.colorMultiplier.x = 0;
+	}
+	if (m_cbColorMultiplierData.colorMultiplier.y > 1.0)
+	{
+		m_cbColorMultiplierData.colorMultiplier.y = 0;
+	}
+	if (m_cbColorMultiplierData.colorMultiplier.z > 1.0)
+	{
+		m_cbColorMultiplierData.colorMultiplier.z = 0;
+	}
+
+	memcpy(m_cbColorMultiplierGpuAddress[m_frameIndex], &m_cbColorMultiplierData, sizeof(m_cbColorMultiplierData));
 }
 
 void Engine::Render()
@@ -520,6 +628,12 @@ void Engine::Render()
 
 	// draw triangle
 	m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
+
+	// constant buffer descriptor heap
+	ID3D12DescriptorHeap* descriptorHeaps[] = { m_cbDescriptorHeap[m_frameIndex].Get() };
+	m_commandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+	m_commandList->SetGraphicsRootDescriptorTable(0, m_cbDescriptorHeap[m_frameIndex]->GetGPUDescriptorHandleForHeapStart());
+
 	m_commandList->RSSetViewports(1, &m_viewport);
 	m_commandList->RSSetScissorRects(1, &m_scissorRect);
 	m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
